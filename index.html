@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>the_final_shot</title>
+  <link rel="stylesheet" href="TemplateData/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Adsgram SDK для показа рекламы за вознаграждение в Telegram Mini Apps -->
+  <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+
+  <script>
+    window.ADSGRAM_BLOCK_ID = "56699";
+
+    function patchAdsgram() {
+      if (window.Adsgram && !window.Adsgram._isPatched) {
+        const origInit = window.Adsgram.init.bind(window.Adsgram);
+        window.Adsgram.init = function(opts) {
+          opts = opts || {};
+          if (!opts.blockId || opts.blockId === "int-0") {
+            opts.blockId = window.ADSGRAM_BLOCK_ID || "56699";
+          }
+          const controller = origInit(opts);
+          const origShow = controller.show.bind(controller);
+          controller.show = function() {
+            return origShow().then(function(result) {
+              console.log("[Adsgram] Ad completed, sending reward to Unity:", result);
+              var u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
+              if (u && typeof u.SendMessage === "function") {
+                try { u.SendMessage("[TelegramSDK]", "OnAdsgramSuccess", "reward"); } catch(e) {}
+                try { u.SendMessage("[TelegramSDK]", "OnAdsgramSuccess", ""); } catch(e) {}
+                try { u.SendMessage("[PlatformSDK]", "OnAdsgramSuccess", "reward"); } catch(e) {}
+                try { u.SendMessage("[PlatformSDK]", "OnAdsgramSuccess", ""); } catch(e) {}
+              }
+              return result;
+            }).catch(function(err) {
+              console.warn("[Adsgram] Ad closed or failed:", err);
+              var u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
+              if (u && typeof u.SendMessage === "function") {
+                try { u.SendMessage("[TelegramSDK]", "OnAdsgramFail", "fail"); } catch(e) {}
+                try { u.SendMessage("[TelegramSDK]", "OnAdsgramFail", ""); } catch(e) {}
+                try { u.SendMessage("[PlatformSDK]", "OnAdsgramFail", "fail"); } catch(e) {}
+                try { u.SendMessage("[PlatformSDK]", "OnAdsgramFail", ""); } catch(e) {}
+              }
+              throw err;
+            });
+          };
+          return controller;
+        };
+        window.Adsgram._isPatched = true;
+      }
+    }
+    patchAdsgram();
+    document.addEventListener("DOMContentLoaded", patchAdsgram);
+    window.addEventListener("load", patchAdsgram);
+    if (window.Telegram && window.Telegram.WebApp) {
+      try {
+        Telegram.WebApp.ready();
+        Telegram.WebApp.expand();
+        if (Telegram.WebApp.lockOrientation) {
+          Telegram.WebApp.lockOrientation();
+        }
+        if (Telegram.WebApp.disableVerticalSwipes) {
+          Telegram.WebApp.disableVerticalSwipes();
+        }
+      } catch (e) {
+        console.warn("Telegram WebApp init:", e);
+      }
+    }
+
+    // Хелпер показа рекламы Adsgram
+    window.ShowAdsgramAd = function(blockId, gameObj, onSuccess, onFail) {
+      if (!window.Adsgram) {
+        console.warn("[Adsgram] window.Adsgram не загружен, симуляция вознаграждения");
+        if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onSuccess);
+        return;
+      }
+      try {
+        const adController = window.Adsgram.init({ blockId: blockId });
+        adController.show().then((result) => {
+          console.log("[Adsgram] Успешный просмотр рекламы:", result);
+          if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onSuccess);
+        }).catch((err) => {
+          console.warn("[Adsgram] Реклама пропущена или ошибка:", err);
+          if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onFail);
+        });
+      } catch (e) {
+        console.error("[Adsgram] Ошибка вызова:", e);
+        if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onFail);
+      }
+    };
+  </script>
+
+  <script>
+    const overlayBackgroundColor = "";
+    const progressBarFillColor = "";
+    const progressBarBackgroundColor = "";
+    const progressBarBorderColor = "";
+    const backgroundFileName = "";
+  </script>
+
+<style>
+  /* Убираем выделение по нажатию клавиш */
+  canvas:focus {
+      outline: none;
+  }
+
+  html, body {
+      /* Убираем отступы */
+      padding: 0;
+      margin: 0;
+      /* Отключаем скролл и лонгтап на IOS */
+      overflow: hidden;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      -khtml-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: rgba(0,0,0,0);
+      /* Ставим высоту на 100% */
+      height: 100%;
+  }
+
+  #orientation-warning {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      background: #14100c;
+      color: #ede2cf;
+      z-index: 999999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 24px;
+      box-sizing: border-box;
+  }
+
+  @media screen and (orientation: landscape) and (max-height: 600px) {
+      #orientation-warning {
+          display: flex;
+      }
+  }
+</style>
+
+</head>
+
+<body class="dark">
+  <div id="orientation-warning">
+    <div style="font-size: 48px; margin-bottom: 16px;">&#128260;</div>
+    <div style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">Пожалуйста, поверните устройство</div>
+    <div style="font-size: 14px; opacity: 0.8;">Игра работает только в портретной (вертикальной) ориентации</div>
+  </div>
+  <div id="unity-container" class="unity-desktop">
+    <canvas id="unity-canvas"></canvas>
+  </div>
+  <div id="loading-cover">
+    <img id="loader-gif" src="TemplateData/loading.gif" alt="Загрузка...">
+    <div class="loader-vignette"></div>
+    <div class="loader-ui">
+      <div class="loader-progress-container">
+        <div id="loader-progress-bar"></div>
+      </div>
+      <div class="loader-meta">
+        <span class="loader-label">ДЕЛО № 2: ЗАГРУЗКА...</span>
+        <span id="loader-percent" class="loader-percent">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const buildUrl = "Build";
+    const loaderUrl = buildUrl + "/Build_Telegram_Delo2.loader.js";
+    const config = {
+      dataUrl: buildUrl + "/Build_Telegram_Delo2.data.unityweb",
+      frameworkUrl: buildUrl + "/Build_Telegram_Delo2.framework.js.unityweb",
+      codeUrl: buildUrl + "/Build_Telegram_Delo2.wasm.unityweb",
+      // #if MEMORY_FILENAME
+      //   memoryUrl: buildUrl + "/",
+      // #endif
+      // #if SYMBOLS_FILENAME
+      //   symbolsUrl: buildUrl + "/",
+      // #endif
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "DefaultCompany",
+      productName: "the_final_shot",
+      productVersion: "1.0",
+    };
+
+    const container = document.querySelector("#unity-container");
+    const canvas = document.querySelector("#unity-canvas");
+    const loadingCover = document.querySelector("#loading-cover");
+    const progressBarEmpty = document.querySelector("#unity-progress-bar-empty");
+    const progressBarFull = document.querySelector("#unity-progress-bar-full");
+    const spinner = document.querySelector('.spinner');
+
+    if (overlayBackgroundColor !== " " && overlayBackgroundColor !== ""){
+      canvas.style.background = overlayBackgroundColor;
+    }
+
+    if (progressBarFillColor !== " " && progressBarFillColor !== ""){
+      progressBarFull.style.background = progressBarFillColor;
+    }
+
+    if (progressBarBackgroundColor !== " " && progressBarBackgroundColor !== ""){
+      progressBarEmpty.style.background = progressBarBackgroundColor;
+    }
+
+    if (progressBarBorderColor !== " " && progressBarBorderColor !== ""){
+      progressBarEmpty.style.border.color = progressBarBorderColor;
+    }
+
+    if (backgroundFileName !== " " && backgroundFileName !== ""){
+      canvas.style.background = "url('" + backgroundFileName + "') center / cover";
+    }
+
+    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+      container.className = "unity-mobile";
+    }
+
+    // #if BACKGROUND_FILENAME
+    // canvas.style.background = "url('" + buildUrl + "/') center / cover";
+    // #endif
+
+    loadingCover.style.display = "";
+
+    // Выключаем появление меню при правом клике мыши
+    document.addEventListener('contextmenu', event => event.preventDefault());
+
+    // Возвращаем фокус, если кликнули по экрану
+    function FocusGame() {
+        window.focus();
+        canvas.focus();
+    }
+
+    window.addEventListener('pointerdown', () => {
+        FocusGame();
+    });
+    window.addEventListener('touchstart', () => {
+        FocusGame();
+    });
+
+    function gpExpectedRejectionMessage(reason) {
+      if (reason == null) return "";
+      if (typeof reason === "string") return reason;
+      if (typeof reason === "object")
+        return String(reason.code || reason.message || reason);
+      return String(reason);
+    }
+
+    function isGpExpectedRejection(reason) {
+      const message = gpExpectedRejectionMessage(reason).toLowerCase();
+      return /cancel last request|user_not_logged_in|payment_rejected|payment_cancelled|purchase_cancelled|cancelled|canceled|cancel|rejected/.test(
+        message
+      );
+    }
+
+    window.addEventListener(
+      "unhandledrejection",
+      (event) => {
+        if (!isGpExpectedRejection(event.reason)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true
+    );
+
+    const unityLoader = document.createElement("script");
+    unityLoader.src = loaderUrl;
+    unityLoader.onload = async () => {
+      createUnityInstance(canvas, config, (progress) => {
+        const pct = Math.min(100, Math.max(0, progress * 100));
+        const bar = document.getElementById("loader-progress-bar");
+        const percentText = document.getElementById("loader-percent");
+
+        if (bar) {
+          bar.style.width = pct + "%";
+        }
+        if (percentText) {
+          percentText.textContent = `${Math.round(pct)}%`;
+        }
+      }).then((unityInstance) => {
+        window.unityInstance = unityInstance;
+        loadingCover.style.transition = "opacity 0.6s ease";
+        loadingCover.style.opacity = "0";
+        setTimeout(() => { loadingCover.style.display = "none"; }, 600);
+      }).catch((message) => {
+        if (isGpExpectedRejection(message)) return;
+        alert(message);
+      });
+    };
+    document.body.appendChild(unityLoader);
+
+    document.addEventListener("pointerdown", () => {
+      container.focus();
+      window.focus();
+      canvas.focus();
+    });
+
+  </script>
+</body>
+
+</html>
