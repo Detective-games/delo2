@@ -8,11 +8,80 @@
   <title>the_final_shot</title>
   <link rel="stylesheet" href="TemplateData/style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- MAX Bridge SDK для работы в мессенджере MAX (dev.max.ru) -->
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
   <!-- Adsgram SDK для показа рекламы за вознаграждение в Telegram Mini Apps -->
   <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+  <!-- Яндекс РСЯ SDK для показа рекламы с вознаграждением в MAX и Web -->
+  <script>window.yaContextCb = window.yaContextCb || [];</script>
+  <script src="https://yandex.ru/ads/system/context.js" async></script>
 
   <script>
     window.ADSGRAM_BLOCK_ID = "56699";
+    // ID блока Rewarded Video из Рекламной сети Яндекса (РСЯ), например: "R-A-1234567-1"
+    window.YANDEX_BLOCK_ID = "";
+
+    // Универсальный обработчик Rewarded Video: Telegram (Adsgram) + MAX / Web (Яндекс РСЯ)
+    window.ShowUniversalRewardedAd = function(gameObj, onSuccess, onFail) {
+      function deliver(method, val) {
+        const u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
+        if (u && typeof u.SendMessage === "function") {
+          try { u.SendMessage(gameObj, method, val); } catch(e) {}
+        }
+      }
+
+      const isTelegram = Boolean(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData);
+
+      // 1. В Telegram — запускаем Adsgram:
+      if (isTelegram && window.Adsgram) {
+        try {
+          const blockId = window.ADSGRAM_BLOCK_ID || "56699";
+          const adController = window.Adsgram.init({ blockId: blockId });
+          adController.show().then(function(result) {
+            console.log("[Adsgram] Просмотр завершён:", result);
+            deliver(onSuccess, "reward");
+          }).catch(function(err) {
+            console.warn("[Adsgram] Реклама закрыта или ошибка:", err);
+            deliver(onFail, "fail");
+          });
+          return;
+        } catch(e) {
+          console.warn("[Adsgram] Ошибка вызова:", e);
+        }
+      }
+
+      // 2. В MAX или в обычном браузере — запускаем Яндекс РСЯ (Rewarded):
+      if (window.YANDEX_BLOCK_ID && window.Ya && window.Ya.Context && window.Ya.Context.AdvManager) {
+        try {
+          window.yaContextCb.push(function() {
+            window.Ya.Context.AdvManager.render({
+              blockId: window.YANDEX_BLOCK_ID,
+              type: "rewarded",
+              platform: "touch",
+              onRewarded: function(isRewarded) {
+                console.log("[Яндекс РСЯ] Награда подтверждена:", isRewarded);
+                if (isRewarded) {
+                  deliver(onSuccess, "reward");
+                } else {
+                  deliver(onFail, "fail");
+                }
+              },
+              onError: function(data) {
+                console.warn("[Яндекс РСЯ] Ошибка показа рекламы:", data);
+                deliver(onFail, "fail");
+              }
+            });
+          });
+          return;
+        } catch(e) {
+          console.warn("[Яндекс РСЯ] Исключение при вызове:", e);
+        }
+      }
+
+      // 3. Fallback: пока ID блока РСЯ не указан — начисляем ход (чтобы игра не зависала при тестировании):
+      console.log("[Реклама MAX] Блок РСЯ настраивается, бонусный ход начислен.");
+      deliver(onSuccess, "reward");
+    };
 
     function patchAdsgram() {
       if (window.Adsgram && !window.Adsgram._isPatched) {
@@ -55,20 +124,37 @@
     patchAdsgram();
     document.addEventListener("DOMContentLoaded", patchAdsgram);
     window.addEventListener("load", patchAdsgram);
-    if (window.Telegram && window.Telegram.WebApp) {
-      try {
-        Telegram.WebApp.ready();
-        Telegram.WebApp.expand();
-        if (Telegram.WebApp.lockOrientation) {
-          Telegram.WebApp.lockOrientation();
+    function initMessengerBridge() {
+      // Поддержка MAX Bridge (dev.max.ru) и Telegram WebApp (Универсальный запуск)
+      const maxApp = window.WebApp;
+      const tgApp = window.Telegram && window.Telegram.WebApp;
+
+      // Если игра открыта в MAX — пробрасываем объект WebApp в window.Telegram.WebApp,
+      // чтобы все внутренние вызовы Unity C# / jslib работали нативно без изменений!
+      if (maxApp && (!window.Telegram || !window.Telegram.WebApp)) {
+        window.Telegram = window.Telegram || {};
+        window.Telegram.WebApp = maxApp;
+      }
+
+      const activeApp = (window.Telegram && window.Telegram.WebApp) || maxApp || tgApp;
+      if (activeApp) {
+        try {
+          if (typeof activeApp.ready === "function") activeApp.ready();
+          if (typeof activeApp.expand === "function") activeApp.expand();
+          if (typeof activeApp.lockOrientation === "function") {
+            try { activeApp.lockOrientation("portrait"); } catch(e) {}
+          }
+          if (typeof activeApp.disableVerticalSwipes === "function") {
+            activeApp.disableVerticalSwipes();
+          }
+        } catch (e) {
+          console.warn("Messenger WebApp init error:", e);
         }
-        if (Telegram.WebApp.disableVerticalSwipes) {
-          Telegram.WebApp.disableVerticalSwipes();
-        }
-      } catch (e) {
-        console.warn("Telegram WebApp init:", e);
       }
     }
+    initMessengerBridge();
+    document.addEventListener("DOMContentLoaded", initMessengerBridge);
+    window.addEventListener("load", initMessengerBridge);
 
     // Хелпер показа рекламы Adsgram
     window.ShowAdsgramAd = function(blockId, gameObj, onSuccess, onFail) {
