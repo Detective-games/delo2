@@ -21,28 +21,56 @@
     // ID блока Rewarded Video из Рекламной сети Яндекса (РСЯ), например: "R-A-1234567-1"
     window.YANDEX_BLOCK_ID = "";
 
+    // Проверка окружения: мы внутри Telegram или в MAX / Web?
+    function isRunningInTelegram() {
+      // Если есть window.WebApp (SDK мессенджера МАКС) — это МАКС!
+      if (window.WebApp && !window.TelegramWebviewProxy) {
+        return false;
+      }
+      const hasTgParam = window.location.hash.includes("tgWebAppData") || window.location.search.includes("tgWebAppData");
+      const hasTgProxy = Boolean(window.TelegramWebviewProxy);
+      return Boolean(hasTgParam || hasTgProxy);
+    }
+
+    function deliverReward(gameObj, onSuccess) {
+      const u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
+      if (u && typeof u.SendMessage === "function") {
+        if (gameObj && onSuccess) {
+          try { u.SendMessage(gameObj, onSuccess, "reward"); } catch(e) {}
+          try { u.SendMessage(gameObj, onSuccess, ""); } catch(e) {}
+        }
+        try { u.SendMessage("[TelegramSDK]", "OnAdsgramSuccess", "reward"); } catch(e) {}
+        try { u.SendMessage("[TelegramSDK]", "OnAdsgramSuccess", ""); } catch(e) {}
+        try { u.SendMessage("[PlatformSDK]", "OnAdsgramSuccess", "reward"); } catch(e) {}
+        try { u.SendMessage("[PlatformSDK]", "OnAdsgramSuccess", ""); } catch(e) {}
+      }
+    }
+
+    function deliverFail(gameObj, onFail) {
+      const u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
+      if (u && typeof u.SendMessage === "function") {
+        if (gameObj && onFail) {
+          try { u.SendMessage(gameObj, onFail, "fail"); } catch(e) {}
+          try { u.SendMessage(gameObj, onFail, ""); } catch(e) {}
+        }
+        try { u.SendMessage("[TelegramSDK]", "OnAdsgramFail", "fail"); } catch(e) {}
+        try { u.SendMessage("[TelegramSDK]", "OnAdsgramFail", ""); } catch(e) {}
+      }
+    }
+
     // Универсальный обработчик Rewarded Video: Telegram (Adsgram) + MAX / Web (Яндекс РСЯ)
     window.ShowUniversalRewardedAd = function(gameObj, onSuccess, onFail) {
-      function deliver(method, val) {
-        const u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
-        if (u && typeof u.SendMessage === "function") {
-          try { u.SendMessage(gameObj, method, val); } catch(e) {}
-        }
-      }
-
-      const isTelegram = Boolean(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData);
-
       // 1. В Telegram — запускаем Adsgram:
-      if (isTelegram && window.Adsgram) {
+      if (isRunningInTelegram() && window.Adsgram) {
         try {
           const blockId = window.ADSGRAM_BLOCK_ID || "56699";
           const adController = window.Adsgram.init({ blockId: blockId });
           adController.show().then(function(result) {
             console.log("[Adsgram] Просмотр завершён:", result);
-            deliver(onSuccess, "reward");
+            deliverReward(gameObj, onSuccess);
           }).catch(function(err) {
             console.warn("[Adsgram] Реклама закрыта или ошибка:", err);
-            deliver(onFail, "fail");
+            deliverFail(gameObj, onFail);
           });
           return;
         } catch(e) {
@@ -50,7 +78,7 @@
         }
       }
 
-      // 2. В MAX или в обычном браузере — запускаем Яндекс РСЯ (Rewarded):
+      // 2. В MAX или в обычном браузере — запускаем Яндекс РСЯ (Rewarded), если настроен:
       if (window.YANDEX_BLOCK_ID && window.Ya && window.Ya.Context && window.Ya.Context.AdvManager) {
         try {
           window.yaContextCb.push(function() {
@@ -61,14 +89,14 @@
               onRewarded: function(isRewarded) {
                 console.log("[Яндекс РСЯ] Награда подтверждена:", isRewarded);
                 if (isRewarded) {
-                  deliver(onSuccess, "reward");
+                  deliverReward(gameObj, onSuccess);
                 } else {
-                  deliver(onFail, "fail");
+                  deliverFail(gameObj, onFail);
                 }
               },
               onError: function(data) {
                 console.warn("[Яндекс РСЯ] Ошибка показа рекламы:", data);
-                deliver(onFail, "fail");
+                deliverFail(gameObj, onFail);
               }
             });
           });
@@ -78,12 +106,29 @@
         }
       }
 
-      // 3. Fallback: пока ID блока РСЯ не указан — начисляем ход (чтобы игра не зависала при тестировании):
-      console.log("[Реклама MAX] Блок РСЯ настраивается, бонусный ход начислен.");
-      deliver(onSuccess, "reward");
+      // 3. В МАКС / Web (когда РСЯ на паузе/настраивается) — сразу начисляем ход:
+      console.log("[MAX / Web] Бонусный ход начислен.");
+      deliverReward(gameObj, onSuccess);
+    };
+
+    // Вызов из WebGL wasm (старое имя функции):
+    window.ShowAdsgramAd = function(blockId, gameObj, onSuccess, onFail) {
+      window.ShowUniversalRewardedAd(gameObj, onSuccess, onFail);
     };
 
     function patchAdsgram() {
+      // Если мы не в Telegram, обезвреживаем Adsgram, чтобы он не выдавал всплывающее окно
+      if (!isRunningInTelegram() && window.Adsgram) {
+        window.Adsgram.init = function() {
+          return {
+            show: function() {
+              return Promise.resolve({ done: true });
+            }
+          };
+        };
+        return;
+      }
+
       if (window.Adsgram && !window.Adsgram._isPatched) {
         const origInit = window.Adsgram.init.bind(window.Adsgram);
         window.Adsgram.init = function(opts) {
@@ -96,23 +141,11 @@
           controller.show = function() {
             return origShow().then(function(result) {
               console.log("[Adsgram] Ad completed, sending reward to Unity:", result);
-              var u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
-              if (u && typeof u.SendMessage === "function") {
-                try { u.SendMessage("[TelegramSDK]", "OnAdsgramSuccess", "reward"); } catch(e) {}
-                try { u.SendMessage("[TelegramSDK]", "OnAdsgramSuccess", ""); } catch(e) {}
-                try { u.SendMessage("[PlatformSDK]", "OnAdsgramSuccess", "reward"); } catch(e) {}
-                try { u.SendMessage("[PlatformSDK]", "OnAdsgramSuccess", ""); } catch(e) {}
-              }
+              deliverReward("[TelegramSDK]", "OnAdsgramSuccess");
               return result;
             }).catch(function(err) {
               console.warn("[Adsgram] Ad closed or failed:", err);
-              var u = window.unityInstance || (typeof unityInstance !== "undefined" ? unityInstance : null);
-              if (u && typeof u.SendMessage === "function") {
-                try { u.SendMessage("[TelegramSDK]", "OnAdsgramFail", "fail"); } catch(e) {}
-                try { u.SendMessage("[TelegramSDK]", "OnAdsgramFail", ""); } catch(e) {}
-                try { u.SendMessage("[PlatformSDK]", "OnAdsgramFail", "fail"); } catch(e) {}
-                try { u.SendMessage("[PlatformSDK]", "OnAdsgramFail", ""); } catch(e) {}
-              }
+              deliverFail("[TelegramSDK]", "OnAdsgramFail");
               throw err;
             });
           };
@@ -124,6 +157,7 @@
     patchAdsgram();
     document.addEventListener("DOMContentLoaded", patchAdsgram);
     window.addEventListener("load", patchAdsgram);
+
     function initMessengerBridge() {
       // Поддержка MAX Bridge (dev.max.ru) и Telegram WebApp (Универсальный запуск)
       const maxApp = window.WebApp;
@@ -155,28 +189,6 @@
     initMessengerBridge();
     document.addEventListener("DOMContentLoaded", initMessengerBridge);
     window.addEventListener("load", initMessengerBridge);
-
-    // Хелпер показа рекламы Adsgram
-    window.ShowAdsgramAd = function(blockId, gameObj, onSuccess, onFail) {
-      if (!window.Adsgram) {
-        console.warn("[Adsgram] window.Adsgram не загружен, симуляция вознаграждения");
-        if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onSuccess);
-        return;
-      }
-      try {
-        const adController = window.Adsgram.init({ blockId: blockId });
-        adController.show().then((result) => {
-          console.log("[Adsgram] Успешный просмотр рекламы:", result);
-          if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onSuccess);
-        }).catch((err) => {
-          console.warn("[Adsgram] Реклама пропущена или ошибка:", err);
-          if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onFail);
-        });
-      } catch (e) {
-        console.error("[Adsgram] Ошибка вызова:", e);
-        if (window.unityInstance) window.unityInstance.SendMessage(gameObj, onFail);
-      }
-    };
   </script>
 
   <script>
@@ -194,11 +206,9 @@
   }
 
   html, body {
-      /* Убираем отступы */
-      padding: 0;
-      margin: 0;
-      /* Отключаем скролл и лонгтап на IOS */
+      /* Запрещаем скролл и лонгтапы */
       overflow: hidden;
+      touch-action: none;
       -webkit-touch-callout: none;
       -webkit-user-select: none;
       -khtml-user-select: none;
@@ -206,8 +216,104 @@
       -ms-user-select: none;
       user-select: none;
       -webkit-tap-highlight-color: rgba(0,0,0,0);
-      /* Ставим высоту на 100% */
+      /* Фиксируем размеры экрана */
       height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      background: #14100c;
+  }
+
+  #unity-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+  }
+
+  #unity-canvas {
+      width: 100%;
+      height: 100%;
+      background: #14100c;
+  }
+
+  #loading-cover {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #14100c;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+  }
+
+  #loader-gif {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      pointer-events: none;
+  }
+
+  .loader-vignette {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      box-shadow: inset 0 0 100px rgba(0,0,0,0.85);
+      pointer-events: none;
+  }
+
+  .loader-ui {
+      position: absolute;
+      bottom: 12%;
+      left: 10%;
+      width: 80%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 10;
+  }
+
+  .loader-progress-container {
+      width: 100%;
+      height: 14px;
+      background: rgba(20, 16, 12, 0.7);
+      border: 1px solid #7d6b53;
+      border-radius: 4px;
+      overflow: hidden;
+      padding: 2px;
+      box-sizing: border-box;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+  }
+
+  #loader-progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #8a7355 0%, #c4aa82 50%, #ede2cf 100%);
+      border-radius: 2px;
+      transition: width 0.15s ease-out;
+  }
+
+  .loader-meta {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      color: #ede2cf;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+      font-weight: 600;
   }
 
   #orientation-warning {
@@ -265,12 +371,6 @@
       dataUrl: buildUrl + "/Build_Telegram_Delo2.data.unityweb",
       frameworkUrl: buildUrl + "/Build_Telegram_Delo2.framework.js.unityweb",
       codeUrl: buildUrl + "/Build_Telegram_Delo2.wasm.unityweb",
-      // #if MEMORY_FILENAME
-      //   memoryUrl: buildUrl + "/",
-      // #endif
-      // #if SYMBOLS_FILENAME
-      //   symbolsUrl: buildUrl + "/",
-      // #endif
       streamingAssetsUrl: "StreamingAssets",
       companyName: "DefaultCompany",
       productName: "the_final_shot",
@@ -280,113 +380,29 @@
     const container = document.querySelector("#unity-container");
     const canvas = document.querySelector("#unity-canvas");
     const loadingCover = document.querySelector("#loading-cover");
-    const progressBarEmpty = document.querySelector("#unity-progress-bar-empty");
-    const progressBarFull = document.querySelector("#unity-progress-bar-full");
-    const spinner = document.querySelector('.spinner');
-
-    if (overlayBackgroundColor !== " " && overlayBackgroundColor !== ""){
-      canvas.style.background = overlayBackgroundColor;
-    }
-
-    if (progressBarFillColor !== " " && progressBarFillColor !== ""){
-      progressBarFull.style.background = progressBarFillColor;
-    }
-
-    if (progressBarBackgroundColor !== " " && progressBarBackgroundColor !== ""){
-      progressBarEmpty.style.background = progressBarBackgroundColor;
-    }
-
-    if (progressBarBorderColor !== " " && progressBarBorderColor !== ""){
-      progressBarEmpty.style.border.color = progressBarBorderColor;
-    }
-
-    if (backgroundFileName !== " " && backgroundFileName !== ""){
-      canvas.style.background = "url('" + backgroundFileName + "') center / cover";
-    }
+    const progressBarFull = document.querySelector("#loader-progress-bar");
+    const loaderPercent = document.querySelector("#loader-percent");
 
     if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
       container.className = "unity-mobile";
     }
 
-    // #if BACKGROUND_FILENAME
-    // canvas.style.background = "url('" + buildUrl + "/') center / cover";
-    // #endif
-
     loadingCover.style.display = "";
 
-    // Выключаем появление меню при правом клике мыши
-    document.addEventListener('contextmenu', event => event.preventDefault());
-
-    // Возвращаем фокус, если кликнули по экрану
-    function FocusGame() {
-        window.focus();
-        canvas.focus();
-    }
-
-    window.addEventListener('pointerdown', () => {
-        FocusGame();
-    });
-    window.addEventListener('touchstart', () => {
-        FocusGame();
-    });
-
-    function gpExpectedRejectionMessage(reason) {
-      if (reason == null) return "";
-      if (typeof reason === "string") return reason;
-      if (typeof reason === "object")
-        return String(reason.code || reason.message || reason);
-      return String(reason);
-    }
-
-    function isGpExpectedRejection(reason) {
-      const message = gpExpectedRejectionMessage(reason).toLowerCase();
-      return /cancel last request|user_not_logged_in|payment_rejected|payment_cancelled|purchase_cancelled|cancelled|canceled|cancel|rejected/.test(
-        message
-      );
-    }
-
-    window.addEventListener(
-      "unhandledrejection",
-      (event) => {
-        if (!isGpExpectedRejection(event.reason)) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      },
-      true
-    );
-
-    const unityLoader = document.createElement("script");
-    unityLoader.src = loaderUrl;
-    unityLoader.onload = async () => {
+    const script = document.createElement("script");
+    script.src = loaderUrl;
+    script.onload = () => {
       createUnityInstance(canvas, config, (progress) => {
-        const pct = Math.min(100, Math.max(0, progress * 100));
-        const bar = document.getElementById("loader-progress-bar");
-        const percentText = document.getElementById("loader-percent");
-
-        if (bar) {
-          bar.style.width = pct + "%";
-        }
-        if (percentText) {
-          percentText.textContent = `${Math.round(pct)}%`;
-        }
+        progressBarFull.style.width = 100 * progress + "%";
+        loaderPercent.innerText = Math.round(100 * progress) + "%";
       }).then((unityInstance) => {
         window.unityInstance = unityInstance;
-        loadingCover.style.transition = "opacity 0.6s ease";
-        loadingCover.style.opacity = "0";
-        setTimeout(() => { loadingCover.style.display = "none"; }, 600);
+        loadingCover.style.display = "none";
       }).catch((message) => {
-        if (isGpExpectedRejection(message)) return;
         alert(message);
       });
     };
-    document.body.appendChild(unityLoader);
-
-    document.addEventListener("pointerdown", () => {
-      container.focus();
-      window.focus();
-      canvas.focus();
-    });
-
+    document.body.appendChild(script);
   </script>
 </body>
 
